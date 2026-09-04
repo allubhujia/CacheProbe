@@ -5,3 +5,7 @@ fastapi
 uvicorn
 pytest
 requests
+
+# Demo only - oracle/rag.py is the single module that calls a real model API.
+# Every experimental result runs on oracle/mock.py and needs none of this.
+groq

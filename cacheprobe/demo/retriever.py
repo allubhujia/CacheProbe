@@ -61,6 +61,13 @@ class ChunkRetriever:
         return len(self.chunks)
 
     def retrieve(self, query_vector: np.ndarray, top_k: int = 4) -> list[RetrievedChunk]:
+        # An empty corpus is a real state, not a misuse: the medical documents
+        # are a separate download, so the demo can be started before any exist.
+        # Returning nothing lets the caller answer "no reference material"
+        # rather than crashing on a zero-width index.
+        if not self.chunks:
+            return []
+
         v = np.asarray(query_vector, dtype=np.float32)
         candidates = self.index.probe(v)
 

@@ -7,6 +7,11 @@ from disk thereafter.
 Vectors are L2-normalised by default, which makes cosine similarity a plain dot
 product. Both the LSH index (random hyperplanes separate by angle) and the
 cache's similarity threshold assume this.
+
+``sentence_transformers`` is imported lazily, inside ``_encode``. Importing
+torch is expensive, and nothing else in the project needs it - ``traces.py``,
+``cache.py`` and the whole test suite work on plain arrays, so they must be
+able to import this module without paying for a transformer.
 """
 
 from __future__ import annotations
@@ -85,7 +90,7 @@ class Embedder:
             return
 
         self.cache_dir.mkdir(parents=True, exist_ok=True)
-        keys = [None] * len(self._index)
+        keys: list[str | None] = [None] * len(self._index)
         for k, i in self._index.items():
             keys[i] = k
         self._keys_path.write_text(json.dumps(keys), encoding="utf-8")
@@ -96,6 +101,7 @@ class Embedder:
 
     def _encode(self, texts: list[str]) -> np.ndarray:
         if self._model is None:
+            # pyrefly: ignore [missing-import]
             from sentence_transformers import SentenceTransformer
 
             self._model = SentenceTransformer(self.model_name)
@@ -109,13 +115,13 @@ class Embedder:
         )
         return np.asarray(vecs, dtype=np.float32)
 
-    # ------------------------------------------------------------------ public
+    # ----------------------------------------------------------------- public
 
     def embed(self, texts: list[str]) -> np.ndarray:
         """Return an ``(len(texts), EMBED_DIM)`` array, one row per input.
 
-        Rows are returned in input order. Repeated strings cost nothing beyond
-        the first occurrence, within a call and across runs.
+        Rows come back in input order. Repeated strings cost nothing beyond the
+        first occurrence, within a call and across runs.
         """
         if not texts:
             return np.empty((0, EMBED_DIM), dtype=np.float32)
