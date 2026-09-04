@@ -1,0 +1,7 @@
+sentence-transformers
+numpy
+matplotlib
+fastapi
+uvicorn
+pytest
+requests

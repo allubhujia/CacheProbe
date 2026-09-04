@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CacheProbe - live demo</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --line: #262b36;
+    --text: #e6e9ef; --muted: #939bab;
+    --safe: #3fb950; --leak: #f85149; --accent: #58a6ff;
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; }
+  header { padding: 14px 20px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+  h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  h1 small { color: var(--muted); font-weight: 400; margin-left: 10px; }
+  .toggle { display: flex; gap: 6px; margin-left: auto; }
+  .toggle button { background: var(--panel); color: var(--muted); border: 1px solid var(--line); padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+  .toggle button:hover { color: var(--text); }
+  .toggle button.on { background: var(--accent); border-color: var(--accent); color: #04101f; font-weight: 600; }
+  main { flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--line); min-height: 0; }
+  section { background: var(--bg); display: flex; flex-direction: column; min-height: 0; }
+  .head { padding: 10px 18px; border-bottom: 1px solid var(--line); font-size: 13px; font-weight: 600; display: flex; justify-content: space-between; align-items: center; }
+  .head span { font-weight: 400; color: var(--muted); font-size: 12px; }
+  .body { flex: 1; overflow-y: auto; padding: 16px 18px; }
+  .msg { margin-bottom: 16px; }
+  .q { color: var(--accent); font-size: 13px; margin-bottom: 6px; }
+  .a { font-size: 14px; line-height: 1.55; white-space: pre-wrap; }
+  .meta { margin-top: 6px; font-size: 11px; color: var(--muted); }
+  .src { font-size: 11px; color: var(--muted); margin-top: 4px; font-style: italic; }
+  form { display: flex; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--line); }
+  input { flex: 1; background: var(--panel); border: 1px solid var(--line); color: var(--text); padding: 9px 12px; border-radius: 6px; font-size: 14px; }
+  button.go { background: var(--accent); border: none; color: #04101f; padding: 9px 16px; border-radius: 6px; font-weight: 600; cursor: pointer; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th { text-align: left; color: var(--muted); font-weight: 500; padding: 7px 6px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--bg); }
+  td { padding: 7px 6px; border-bottom: 1px solid #1d222c; }
+  .lat { font-variant-numeric: tabular-nums; }
+  .cached { color: var(--leak); font-weight: 600; }
+  .clean { color: var(--muted); }
+  .wrong { color: var(--safe); font-weight: 600; }
+  .note { padding: 10px 18px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--line); line-height: 1.5; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>CacheProbe <small>semantic cache - live timing side channel</small></h1>
+  <div class="toggle" id="toggle">
+    <button data-d="D0" class="on">D0 none</button>
+    <button data-d="D1">D1 uniform</button>
+    <button data-d="D2">D2 jitter</button>
+    <button data-d="D3">D3 buckets</button>
+    <button data-d="D4">D4 selective</button>
+  </div>
+</header>
+
+<main>
+  <section>
+    <div class="head">User <span id="cachestat">cache: 0 entries</span></div>
+    <div class="body" id="chat"></div>
+    <form id="askform">
+      <input id="q" placeholder="Ask a health question..." autocomplete="off">
+      <button class="go" type="submit">Send</button>
+    </form>
+  </section>
+
+  <section>
+    <div class="head">Adversary <span id="defstat">defence: D0-none</span></div>
+    <div class="body">
+      <table>
+        <thead><tr><th>Concept</th><th>Latency</th><th>Verdict</th><th>Right?</th></tr></thead>
+        <tbody id="rows"><tr><td colspan="4" class="clean">Run a sweep to probe the cache.</td></tr></tbody>
+      </table>
+    </div>
+    <form id="probeform"><button class="go" type="submit" style="flex:1">Probe all concepts</button></form>
+    <div class="note">
+      The adversary submits only paraphrases the user never typed, and reads nothing but the clock.
+      A fast reply means someone else already asked.
+    </div>
+  </section>
+</main>
+
+<script>
+const chat = document.getElementById('chat');
+const rows = document.getElementById('rows');
+
+document.getElementById('askform').onsubmit = async (e) => {
+  e.preventDefault();
+  const input = document.getElementById('q');
+  const query = input.value.trim();
+  if (!query) return;
+  input.value = '';
+
+  const div = document.createElement('div');
+  div.className = 'msg';
+  div.innerHTML = `<div class="q">${esc(query)}</div><div class="a clean">...</div>`;
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+
+  const res = await fetch('/api/ask', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({query})
+  }).then(r => r.json());
+
+  const sources = (res.sources || []).length
+    ? `<div class="src">Sources: ${res.sources.map(esc).join('; ')}</div>` : '';
+  div.innerHTML = `<div class="q">${esc(query)}</div>` +
+    `<div class="a">${esc(res.answer)}</div>${sources}` +
+    `<div class="meta">${res.latency_ms} ms${res.served_from_cache ? ' - served from cache' : ''}</div>`;
+  chat.scrollTop = chat.scrollHeight;
+  refresh();
+};
+
+document.getElementById('probeform').onsubmit = async (e) => {
+  e.preventDefault();
+  rows.innerHTML = '<tr><td colspan="4" class="clean">Probing...</td></tr>';
+  const res = await fetch('/api/probe', {method: 'POST'}).then(r => r.json());
+  document.getElementById('defstat').textContent = 'defence: ' + res.defence;
+  rows.innerHTML = res.rows.map(r => `
+    <tr>
+      <td>${esc(r.concept)}</td>
+      <td class="lat">${r.latency_ms} ms</td>
+      <td class="${r.verdict === 'CACHED' ? 'cached' : 'clean'}">${r.verdict}</td>
+      <td class="${r.correct === false ? 'wrong' : 'clean'}">${r.correct === null ? '-' : (r.correct ? 'yes' : 'no')}</td>
+    </tr>`).join('');
+};
+
+document.getElementById('toggle').onclick = async (e) => {
+  const button = e.target.closest('button');
+  if (!button) return;
+  [...e.currentTarget.children].forEach(b => b.classList.toggle('on', b === button));
+  const res = await fetch('/api/defence', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({defence: button.dataset.d})
+  }).then(r => r.json());
+  document.getElementById('defstat').textContent = 'defence: ' + (res.defence || res.error);
+};
+
+async function refresh() {
+  const s = await fetch('/api/state').then(r => r.json());
+  document.getElementById('cachestat').textContent =
+    `cache: ${s.cache_size} entries - ${(100 * s.hit_rate).toFixed(0)}% hit rate`;
+}
+function esc(s) { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }
+refresh();
+</script>
+</body>
+</html>
