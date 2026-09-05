@@ -131,27 +131,39 @@ future work.
 
 ## Status
 
-AI-free (data structures, algorithms, and plain HTTP/JSON) unless noted:
+Every module is implemented. Only two touch a model at all:
 
 | Area | Status |
 |---|---|
-| `heap.py`, `lsh_index.py`, `cache.py`, `policies/` | done, AI-free |
-| `defence/`, `attack/`, `server.py`, `experiments.py`, `plots.py` | done, AI-free |
-| `corpus.py`, `demo_traces.py`, `demo/retriever.py`, `demo/app.py` | done, AI-free (consume embeddings, don't produce them) |
-| `embedder.py` | needs repair — see below |
-| `oracle/rag.py` | not yet implemented — the only file that calls a real LLM |
-| `defence/regions.py` zero-shot labelling | not implemented by design — the keyword and operator-policy labellers are AI-free and implemented instead |
+| `heap.py`, `lsh_index.py`, `cache.py`, `policies/` | done — data structures and algorithms only |
+| `defence/`, `attack/`, `server.py`, `experiments.py`, `plots.py` | done — timing, graphs, plain HTTP/JSON |
+| `corpus.py`, `demo_traces.py`, `demo/retriever.py`, `demo/app.py` | done — consume embeddings, never produce them |
+| `embedder.py` | done — runs a sentence-transformer encoder |
+| `oracle/rag.py` | done — the only module that calls a real LLM API |
+| `defence/regions.py` zero-shot labelling | not implemented by design — `KeywordLabeller` and `from_operator_policy` cover §6.6 options 1 and 3 without a model dependency; `label_zero_shot()` raises rather than smuggle one in |
 
-`embedder.py` currently has hand-edit typos (`text.encoder` instead of
-`.encode`, `self.vecs` instead of `self._vecs`, `json.dump` instead of
-`json.dumps`, and `save()` is missing its `np.save` call). Nothing runs against
-real embeddings until it's fixed.
+`data/medical/` is empty until you add documents. That state is handled rather
+than fatal: retrieval returns nothing, the RAG oracle skips the API call
+entirely, and the answer says it has no reference material — so the cache,
+defences, and attack can all be demonstrated before any corpus exists.
 
 ## Setup
 
 ```bash
-pip install sentence-transformers fastapi uvicorn pytest
+pip install sentence-transformers fastapi uvicorn pytest groq
 ```
 
-`numpy`, `matplotlib`, `requests`, `torch`, `transformers`, `pydantic` are
-assumed already available in the environment.
+`numpy`, `matplotlib`, `requests`, `torch`, `transformers`, and `pydantic` are
+assumed already present. `groq` is needed only for the demo's RAG oracle —
+every experiment runs on `oracle/mock.py` and needs no credentials.
+
+The demo's LLM call reads `GROQ_API_KEY` from the environment (Groq's free tier
+is sufficient). Nothing else in the project needs credentials. Default model is
+`llama-3.3-70b-versatile`; Groq retires models periodically, so if a call comes
+back "model not found", check
+[console.groq.com/docs/models](https://console.groq.com/docs/models) for the
+current production list and pass `model=` to `RAGOracle`.
+
+Because the free tier is rate-limited per minute, a 429 is a normal operating
+condition rather than a failure — the oracle turns it into a visible "rate
+limited, retry in Ns" answer instead of crashing the demo.
