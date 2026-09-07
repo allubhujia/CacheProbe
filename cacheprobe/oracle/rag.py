@@ -73,4 +73,89 @@ class RAGOracle(Oracle):
     from the sources - which is the one failure this design exists to prevent.
     """
 
+    def __init__(
+      self,
+      retriever: ChunkRetriever,
+      embed_fn: Callable[[str], np.ndarray],
+      client: object | None = None,
+      model: str = DEFAULT_MODEL,
+      top_l: int = 4,
+      max_tokens: int = 2048,
+      temperature: float = 0.2,
+      cost_per_call: float = 0.0,
+    ) -> None:
+
+      super().__init__(cost_per_call = cost_per_call)
+      self.retriever = retriever
+      self.embed_fn = embed_fn
+      self.model = model
+      self.top_k = top_k
+      # Deliberately modest: answers land in a chat bubble and are stored in
+      # a bounded cache, so a long ceiling would waste memory per entry.
+      # Still well above what a two-to-four sentence grounded answer needs.
+      self.max_tokens = max_tokens
+      self.temperature = temperature
+      self._client = client
+
+    # ---------------------------------------------------------------- client
+
+    @property
+    def client(self):
+      """Lazily construct the Groq client
+
+      Deferred so importing this module (and therefore ``demo/app.y``) does
+      not require an API key to be present - the demo runs end to end on
+      ``MockOracle`` with no credentials at all.
+      """
+      if self._client is None:
+        # pyrefly: ignore [missing-import]
+        from groq import Groq
+
+        self._client = Groq()
+      return self._client
     
+
+    def answer(self, query: str) -> OracleResponse:
+      import time
+
+      started = time.perf_counter
+
+      vector = np.asarray(self.embed_fn(query), dtype=np.float32)
+      context, sources = self.retriever.build_context(vector, top_k=self.top_k)
+
+      if not context.strip():
+            # Nothing retrieved: answering anyway would be exactly the
+            # ungrounded guess this design exists to prevent. Skip the API call
+            # entirely rather than spend a request on it.
+            self.stats.record(latency_s=time.perf_counter - started, cost=0.0)
+            return OracleResponse(text= _NO_CONTEXT_REPLY, sources=())
+      
+      user_content = f"Reference passages:\n\n{context}\n\n---\n\nQuestion: {query}"
+
+      try:
+        completion = self.client.chat.completions.create(
+          model = self.model,
+          max_completion_tokens = self.max_tokens,
+          temperature = self.temperature,
+          messages = [
+              {"role": "system", "content":SYSTEM_PROMPT},
+              {"role": "user", "content": user_content}
+          ],
+        )
+      except Exception as exc:
+        self.stats.record(latency_s=time.perf_counter()-started, cost=0.0)
+        return OracleResponse(text=self._describe_error(exc), sources=())
+      
+      self.stats.record(
+        latency_s=time.perf_counter()-started, cost=self.cost_per_call
+      )
+
+      choice = completion.choices[0]
+      text = (choice.message.content or "").strip()
+      # finish_reason tells us whether what we got is a complete answer.
+      # "length" means the ceiling cut it off mid-sentence; serving that to
+      # the cache would store a truncated answer permanently.
+      
+      
+
+        
